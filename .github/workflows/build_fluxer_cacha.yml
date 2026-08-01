@@ -1,5 +1,5 @@
 # ==============================================================================
-# CaCha-Fluxer Desktop Build Workflow (Final v2)
+# CaCha-Fluxer Desktop Build Workflow (Final v3)
 # Windows (x64), macOS (ARM64), Linux (x64) için derleme yapar
 # ==============================================================================
 
@@ -63,6 +63,7 @@ jobs:
       # ADIM 4: pnpm kur (corepack üzerinden)
       # ======================================================================
       - name: Setup pnpm
+        shell: bash
         run: corepack enable && corepack prepare pnpm@latest --activate
 
       # ======================================================================
@@ -70,11 +71,10 @@ jobs:
       # ======================================================================
       
       # --- Linux bağımlılıkları ---
-      # libfido2-udev, libfido2-dev: WebAuthn için
-      # llvm, libclang-dev: Rust bindgen'in fido/es384.h dosyasını bulabilmesi için
-      # libvpx-dev, libopus-dev: WebRTC için
+      # libfido2-udev kaldırıldı (Ubuntu 22.04'te yok, libfido2-dev yeterli)
       - name: Install Linux system dependencies
         if: matrix.platform == 'linux'
+        shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -98,12 +98,12 @@ jobs:
             libopus-dev \
             libudev-dev \
             libpcsclite-dev \
-            libfido2-dev \
-            libfido2-udev
+            libfido2-dev
 
       # --- macOS bağımlılıkları ---
       - name: Install macOS system dependencies
         if: matrix.platform == 'mac'
+        shell: bash
         run: |
           brew install nasm yasm pkg-config cmake python-setuptools
 
@@ -118,22 +118,25 @@ jobs:
       # ADIM 6: Node.js bağımlılıklarını kur (KÖK DİZİNDE)
       # ======================================================================
       - name: Install Node.js dependencies (root)
+        shell: bash
         run: pnpm install
 
       # ======================================================================
       # ADIM 7: Kaynak kodu derle
       # ======================================================================
-      # Linux için LIBCLANG_PATH ve BINDGEN_EXTRA_CLANG_ARGS ayarla (fido/es384.h hatasını çözer)
-      # macOS için MACOSX_DEPLOYMENT_TARGET ve SDKROOT ayarla (webrtc camera-native hatasını çözer)
+      # CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG ve RUST_BACKTRACE=full eklendi
+      # Bu sayede macOS'taki webrtc-sender çökmesinin tam sebebini log'larda görebileceğiz.
       - name: Build desktop app
         working-directory: fluxer_desktop
+        shell: bash
         env:
           NODE_ENV: production
           FLUXER_DESKTOP_PRODUCTION: 'true'
           PUBLIC_RELEASE_CHANNEL: stable
           PUBLIC_BUILD_VERSION: ${{ github.ref_name }}
           ELECTRON_ARCH: ${{ matrix.arch }}
-          RUST_BACKTRACE: 1
+          RUST_BACKTRACE: full
+          CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG: 'true'
           # Linux: clang'a sistem header'larını bulması için yol ver
           LIBCLANG_PATH: ${{ matrix.platform == 'linux' && '/usr/lib/llvm-14/lib' || '' }}
           BINDGEN_EXTRA_CLANG_ARGS: ${{ matrix.platform == 'linux' && '-I/usr/include -I/usr/include/x86_64-linux-gnu' || '' }}
@@ -150,6 +153,7 @@ jobs:
       - name: Package macOS app
         if: matrix.platform == 'mac'
         working-directory: fluxer_desktop
+        shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           ELECTRON_ARCH: ${{ matrix.arch }}
@@ -161,6 +165,7 @@ jobs:
       - name: Package Windows/Linux app
         if: matrix.platform != 'mac'
         working-directory: fluxer_desktop
+        shell: bash
         env:
           ELECTRON_ARCH: ${{ matrix.arch }}
         run: pnpm exec electron-builder --config electron-builder.config.cjs --${{ matrix.platform }} --publish never
