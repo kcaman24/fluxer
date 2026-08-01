@@ -36,43 +36,49 @@ jobs:
       # 1. Adım: GitHub'daki fork'ladığınız repo kodlarını sunucuya indirir.
       - uses: actions/checkout@v4
       
-      # 2. Adım: pnpm paket yöneticisini kurar.
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        
-      # 3. Adım: Node.js 20 sürümünü kurar ve pnpm önbelleğini (cache) aktif eder.
-      - name: Setup Node.js
+      # 2. Adım: Rust toolchain'i kurar. Fluxer'ın CI araçlarını çalıştırmak için bu şart.
+      - name: Set up Rust toolchain (CI helpers)
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: "1.93.0"
+          
+      # 3. Adım: Node.js 20 sürümünü kurar.
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
           
-      # 4. Adım: Rust toolchain'i kurar.
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      # 4. Adım: pnpm paket yöneticisini corepack üzerinden aktif eder.
+      - name: Set up pnpm via corepack
+        run: corepack enable && corepack prepare pnpm@latest --activate
+
+      # 5. Adım: Sadece Windows için Python 3.13 kurar (Node native modülleri için gerekir).
+      - name: Set up Python (Windows)
+        if: matrix.platform == 'windows'
+        uses: actions/setup-python@v5
         with:
-          toolchain: "1.93.0"
-        
-      # 5. Adım: Sadece Linux derlemesi çalışıyorsa burası çalışır. 
-      # WebRTC, WebAuthn(libfido2) ve genel sistem için gereken tüm kütüphaneler.
-      - name: Install Linux deps
+          python-version: "3.13"
+
+      # 6. Adım: Sadece Linux derlemesi için Fluxer'ın kendi CI aracı ile sistem bağımlılıklarını kurar.
+      # Bu adım webrtc-sys ve libfido2 hatalarını çözer.
+      - name: Install Linux dependencies
         if: matrix.platform == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libdbus-1-dev libpulse-dev libevdev-dev libssl-dev libvpx-dev libopus-dev pkg-config clang libclang-dev libudev-dev libpcsclite-dev build-essential python3
-          
-      # 5.5. Adım: Sadece Mac derlemesi çalışıyorsa burası çalışır. 
-      # WebRTC'nin video/camera özelliklerinin derlenmesi için gereken düşük seviyeli araçlar.
-      - name: Install macOS deps
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: cargo run --locked --quiet --manifest-path tools/ci/Cargo.toml -- build-desktop --step install_linux_deps
+
+      # 7. Adım: Sadece Mac derlemesi için WebRTC bağımlılıklarını ve Python setuptools kurar.
+      - name: Install macOS dependencies
         if: matrix.platform == 'mac'
-        run: brew install nasm yasm pkg-config cmake
+        run: |
+          brew install nasm yasm pkg-config cmake
+          cargo run --locked --quiet --manifest-path tools/ci/Cargo.toml -- build-desktop --step install_setuptools_macos
           
-      # 6. Adım: Tüm bağımlılıkları kurar. --frozen-lockfile KALDIRILDI.
-      # Çünkü dosyaları değiştirdiğimiz için kilit dosyası eski kalıyordu ve kuruluma izin vermiyordu.
+      # 8. Adım: Tüm Node/Rust bağımlılıklarını kurar.
       - name: Install dependencies
         run: pnpm install
       
-      # 7. Adım: Kaynak kodları derler. 
+      # 9. Adım: Kaynak kodları derler. 
       - name: Build desktop
         working-directory: fluxer_desktop
         env:
@@ -83,7 +89,7 @@ jobs:
           ELECTRON_ARCH: ${{ matrix.arch }}
         run: pnpm build
         
-      # 8. Adım: Sadece Mac derlemesi için electron-builder'ı çalıştırır.
+      # 10. Adım: Sadece Mac derlemesi için electron-builder'ı çalıştırır.
       - name: Package (mac)
         if: matrix.platform == 'mac'
         working-directory: fluxer_desktop
@@ -92,7 +98,7 @@ jobs:
           ELECTRON_ARCH: ${{ matrix.arch }}
         run: pnpm exec electron-builder --config electron-builder.config.cjs --mac --publish never
         
-      # 9. Adım: Windows ve Linux derlemeleri için electron-builder'ı çalıştırır.
+      # 11. Adım: Windows ve Linux derlemeleri için electron-builder'ı çalıştırır.
       - name: Package (win/linux)
         if: matrix.platform != 'mac'
         working-directory: fluxer_desktop
@@ -100,9 +106,7 @@ jobs:
           ELECTRON_ARCH: ${{ matrix.arch }}
         run: pnpm exec electron-builder --config electron-builder.config.cjs --${{ matrix.platform }} --publish never
         
-      # 10. Adım: Çıktıları (Artifacts) yükler.
-      # if: always() eklendi ki, bir platform başarısız olsa bile başarılı olanların çıktıları (Windows gibi) kaybolmasın.
-      # path kısmına hem dist hem dist-electron eklendi ki dosyalar kaçmasın.
+      # 12. Adım: Çıktıları (Artifacts) yükler. if: always() sayesinde bir platform hata verse bile başarılı olanlar indirilebilir.
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         if: always()
