@@ -1,79 +1,65 @@
-name: Build CaCha-Fluxer Desktop
-on:
-  push:
-    tags: ['v*']
-  workflow_dispatch:
-
-jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-14
-            platform: mac
-            arch: arm64
-          - os: macos-13
-            platform: mac
-            arch: x64
-          - os: windows-latest
-            platform: win
-            arch: x64
-          - os: ubuntu-22.04
-            platform: linux
-            arch: x64
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      
-      # Sürüm belirtmeden package.json'daki packageManager (pnpm@10.29.3) değerini okumasını sağlıyoruz
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-          
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        
-      - name: Install Linux deps
-        if: matrix.platform == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libdbus-1-dev libpulse-dev libevdev-dev
-          
-      - run: pnpm install --frozen-lockfile
-      
-      - name: Build desktop
-        working-directory: fluxer_desktop
-        env:
-          NODE_ENV: production
-          FLUXER_DESKTOP_PRODUCTION: 'true'
-          PUBLIC_RELEASE_CHANNEL: stable
-          PUBLIC_BUILD_VERSION: ${{ github.ref_name }}
-          ELECTRON_ARCH: ${{ matrix.arch }}
-        run: pnpm build
-        
-      - name: Package (mac)
-        if: matrix.platform == 'mac'
-        working-directory: fluxer_desktop
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: pnpm exec electron-builder --config electron-builder.config.cjs --mac --publish never
-        
-      - name: Package (win/linux)
-        if: matrix.platform != 'mac'
-        working-directory: fluxer_desktop
-        run: pnpm exec electron-builder --config electron-builder.config.cjs --${{ matrix.platform }} --publish never
-        
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cacha-fluxer-${{ matrix.platform }}-${{ matrix.arch }}
-          path: |
-            fluxer_desktop/dist/*.dmg
-            fluxer_desktop/dist/*.exe
-            fluxer_desktop/dist/*.AppImage
-            fluxer_desktop/dist/*.deb
+{
+	"name": "cacha-fluxer",
+  	"version": "1.0.0",
+  	"description": "CaCha-Fluxer Desktop Client for Self-Hosted Instances",
+  	"homepage": "https://desttek.shop",
+  	"author": "CaCha <desttek@desttek.shop>",
+	"private": true,
+	"type": "module",
+	"main": "dist/main/index.js",
+	"scripts": {
+		"build": "node scripts/build.mjs",
+		"set-channel": "cargo run --manifest-path ../tools/ci/Cargo.toml -- build-desktop --step set_build_channel",
+		"test": "cargo test --manifest-path native/rust/Cargo.toml",
+		"typecheck": "tsgo --noEmit",
+		"test:native-media": "node scripts/native-media-integration.mjs",
+		"test:native-media:strict": "node scripts/native-media-integration.mjs --strict"
+	},
+	"dependencies": {
+		"@fluxer/voice_engine_v2": "workspace:*",
+		"@simplewebauthn/browser": "13.2.2",
+		"franc-min": "6.2.0",
+		"hunspell-asm": "4.0.2",
+		"update-electron-app": "3.1.2",
+		"velopack": "0.0.1298"
+	},
+	"devDependencies": {
+		"@types/node": "24.10.9",
+		"@typescript/native-preview": "7.0.0-dev.20260130.1",
+		"electron": "41.2.2",
+		"electron-builder": "26.9.0",
+		"esbuild": "0.27.2",
+		"typescript": "5.9.3"
+	},
+	"knip": {
+		"ignoreDependencies": [
+			"electron-builder"
+		]
+	},
+	"optionalDependencies": {
+		"@fluxer/linux-audio-capture": "file:./native/linux-audio-capture",
+		"@fluxer/linux-evdev": "file:./native/linux-evdev",
+		"@fluxer/linux-input-hook": "file:./native/linux-input-hook",
+		"@fluxer/linux-notifications": "file:./native/linux-notifications",
+		"@fluxer/linux-portals": "file:./native/linux-portals",
+		"@fluxer/linux-screen-capture": "file:./native/linux-screen-capture",
+		"@fluxer/mac-app-audio": "file:./native/mac-app-audio",
+		"@fluxer/mac-clipboard": "file:./native/mac-clipboard",
+		"@fluxer/mac-screen-capture": "file:./native/mac-screen-capture",
+		"@fluxer/mac-sysctl": "file:./native/mac-sysctl",
+		"@fluxer/mac-tcc": "file:./native/mac-tcc",
+		"@fluxer/macos-input-hook": "file:./native/macos-input-hook",
+		"@fluxer/platform-info": "file:./native/platform-info",
+		"@fluxer/system-hunspell": "file:./native/system-hunspell",
+		"@fluxer/webauthn": "file:./native/webauthn",
+		"@fluxer/webrtc-sender": "file:./native/webrtc-sender",
+		"@fluxer/win-clipboard": "file:./native/win-clipboard",
+		"@fluxer/win-shell": "file:./native/win-shell",
+		"@fluxer/win-toast": "file:./native/win-toast",
+		"@fluxer/win-game-capture": "file:./native/win-game-capture",
+		"@fluxer/win-process-loopback": "file:./native/win-process-loopback",
+		"@fluxer/windows-input-hook": "file:./native/windows-input-hook",
+		"electron-log": "5.4.3",
+		"node-mac-permissions": "2.5.0"
+	}
+}
