@@ -1,28 +1,21 @@
 # ==============================================================================
-# CaCha-Fluxer Desktop Build Workflow
+# CaCha-Fluxer Desktop Build Workflow (Final)
 # Windows (x64), macOS (ARM64), Linux (x64) için derleme yapar
 # ==============================================================================
 
 name: Build CaCha-Fluxer Desktop
 
-# --- Tetikleyiciler ---
-# Bu workflow ne zaman çalışır?
 on:
-  # "v1.0.0" gibi v ile başlayan bir tag push'landığında otomatik çalışır
   push:
     tags: ['v*']
-  # GitHub arayüzünden manuel olarak "Run Workflow" butonuna basıldığında çalışır
   workflow_dispatch:
 
-# --- İş (Job) Tanımı ---
 jobs:
   build:
     name: Build (${{ matrix.platform }} ${{ matrix.arch }})
     
-    # Matrix stratejisi: Aynı işi 3 farklı işletim sisteminde paralel çalıştır
     strategy:
-      fail-fast: false  # Bir platform başarısız olursa diğerleri devam etsin
-      
+      fail-fast: false
       matrix:
         include:
           # macOS - Apple Silicon (M1/M2/M3) - arm64
@@ -43,7 +36,6 @@ jobs:
             arch: x64
             rust_target: x86_64-unknown-linux-gnu
 
-    # Her matrix işi kendi işletim sisteminde çalışır
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -54,7 +46,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ======================================================================
-      # ADIM 2: Rust toolchain kur (1.93.0 sabit - Fluxer bunu gerektirir)
+      # ADIM 2: Rust toolchain kur (1.93.0 sabit)
       # ======================================================================
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -71,7 +63,7 @@ jobs:
           node-version: '20'
 
       # ======================================================================
-      # ADIM 4: pnpm kur (corepack üzerinden - sürüm çakışmasını önler)
+      # ADIM 4: pnpm kur (corepack üzerinden)
       # ======================================================================
       - name: Setup pnpm
         run: corepack enable && corepack prepare pnpm@latest --activate
@@ -81,8 +73,10 @@ jobs:
       # ======================================================================
       
       # --- Linux bağımlılıkları ---
-      # WebRTC (libvpx, libopus), WebAuthn (libfido2), GUI (gtk), ses (alsa, pulse),
-      # ekran yakalama (dbus, evdev), derleme araçları (build-essential, cmake, clang)
+      # libfido2-dev: WebAuthn için
+      # libclang-dev: Rust bindgen için (fido/es384.h hatasını çözer)
+      # libvpx-dev, libopus-dev: WebRTC için
+      # libgtk-3-dev, libwebkit2gtk-4.1-dev: Electron için
       - name: Install Linux system dependencies
         if: matrix.platform == 'linux'
         run: |
@@ -110,15 +104,12 @@ jobs:
             libfido2-dev
 
       # --- macOS bağımlılıkları ---
-      # WebRTC için nasm, yasm; paket yönetimi için pkg-config, cmake
-      # Python setuptools (Homebrew Python'ına pip ile kurulamaz, brew ile kurulur)
       - name: Install macOS system dependencies
         if: matrix.platform == 'mac'
         run: |
           brew install nasm yasm pkg-config cmake python-setuptools
 
       # --- Windows bağımlılıkları ---
-      # Python (Node native modüllerin derlenmesi için)
       - name: Setup Python (Windows)
         if: matrix.platform == 'win'
         uses: actions/setup-python@v5
@@ -126,16 +117,13 @@ jobs:
           python-version: "3.13"
 
       # ======================================================================
-      # ADIM 6: Node.js bağımlılıklarını kur (KÖK DİZİNDE - monorepo)
+      # ADIM 6: Node.js bağımlılıklarını kur (KÖK DİZİNDE)
       # ======================================================================
-      # KRİTİK: pnpm install KÖK dizinde çalıştırılmalıdır.
-      # fluxer_desktop/node_modules otomatik olarak kök dizinden linklenir.
-      # --frozen-lockfile KULLANILMAZ çünkü dosyaları değiştirdik (isim, sürüm vs.)
       - name: Install Node.js dependencies (root)
         run: pnpm install
 
       # ======================================================================
-      # ADIM 7: node_modules'un doğru kurulduğunu doğrula (debug)
+      # ADIM 7: fluxer_desktop/node_modules kontrolü (debug)
       # ======================================================================
       - name: Verify node_modules exists
         shell: bash
@@ -150,10 +138,10 @@ jobs:
           ls node_modules/.pnpm 2>/dev/null | grep "@fluxer" | head -10 || echo "HATA: @fluxer paketleri bulunamadı!"
 
       # ======================================================================
-      # ADIM 8: Kaynak kodu derle (TypeScript + Rust native modüller)
+      # ADIM 8: Kaynak kodu derle
       # ======================================================================
-      # ELECTRON_ARCH: Her platform sadece kendi mimarisi için derleme yapar
-      # RUST_BACKTRACE: Rust hatası olursa detaylı çıktı verir
+      # Linux için BINDGEN_EXTRA_CLANG_ARGS ayarla (fido/es384.h hatasını çözer)
+      # macOS için SDKROOT ayarla
       - name: Build desktop app
         working-directory: fluxer_desktop
         env:
@@ -163,14 +151,17 @@ jobs:
           PUBLIC_BUILD_VERSION: ${{ github.ref_name }}
           ELECTRON_ARCH: ${{ matrix.arch }}
           RUST_BACKTRACE: 1
+          # Linux: clang'a sistem header'larını bulması için yol ver
+          BINDGEN_EXTRA_CLANG_ARGS: ${{ matrix.platform == 'linux' && '-I/usr/include -I/usr/include/x86_64-linux-gnu' || '' }}
+          # macOS: SDK yolunu ayarla
+          SDKROOT: ${{ matrix.platform == 'mac' && '/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk' || '' }}
         run: pnpm build
 
       # ======================================================================
-      # ADIM 9: Uygulamayı paketle (electron-builder)
+      # ADIM 9: Uygulamayı paketle
       # ======================================================================
       
       # --- macOS paketleme ---
-      # CSC_IDENTITY_AUTO_DISCOVERY: Apple imzalama olmadan (imzasız) derleme
       - name: Package macOS app
         if: matrix.platform == 'mac'
         working-directory: fluxer_desktop
@@ -188,7 +179,7 @@ jobs:
         run: pnpm exec electron-builder --config electron-builder.config.cjs --${{ matrix.platform }} --publish never
 
       # ======================================================================
-      # ADIM 10: Çıktı dosyalarını listele (debug - nereye gittiklerini görmek için)
+      # ADIM 10: Çıktı dosyalarını listele (debug)
       # ======================================================================
       - name: List all output files (debug)
         if: always()
@@ -230,9 +221,6 @@ jobs:
       # ======================================================================
       # ADIM 11: Çıktıları (Artifacts) GitHub'a yükle
       # ======================================================================
-      # if: always() → Bir platform başarısız olsa bile başarılı olanların
-      # çıktıları indirilebilir olur
-      # Glob pattern (**/*.exe) sayesinde dosya hangi klasörde olursa olsun bulunur
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         if: always()
