@@ -1,78 +1,112 @@
+# İş akışının (workflow) adı. GitHub Actions sekmesinde bu isimle görünür.
 name: Build CaCha-Fluxer Desktop
+
+# "on" bloğu, bu derlemenin ne zaman otomatik olarak başlayacağını belirler.
 on:
+  # Eğer "v1.0.0" gibi "v" harfiyle başlayan bir etiket (tag) push'larsan çalışır.
   push:
     tags: ['v*']
+  # GitHub arayüzünden manuel olarak "Run Workflow" butonuna basıldığında da çalışmasına izin verir.
   workflow_dispatch:
 
+# "jobs" bloğu, yapılacak asıl işleri (derleme süreçlerini) içerir.
 jobs:
   build:
+    # "strategy" ile aynı işi farklı ortamlarda (matrix) paralel olarak çalıştırabiliriz.
     strategy:
-      fail-fast: false
+      fail-fast: false # Bir platformda hata çıkarsa diğerlerinin devam etmesine izin verir.
       matrix:
+        # include altında 4 farklı derleme ortamı tanımladık. Her biri kendi işletim sisteminde çalışır.
         include:
-          - os: macos-14
+          - os: macos-14       # Apple Silicon (M1/M2/M3) çipli Mac ortamı
             platform: mac
             arch: arm64
-          - os: macos-13
+          - os: macos-13       # Intel çipli Mac ortamı
             platform: mac
             arch: x64
-          - os: windows-latest
+          - os: windows-latest # Windows ortamı
             platform: win
             arch: x64
-          - os: ubuntu-22.04
+          - os: ubuntu-22.04   # Linux ortamı
             platform: linux
             arch: x64
+            
+    # Her bir matrix işi, yukarıda tanımladığımız o işletim sisteminde (os) çalışacak.
     runs-on: ${{ matrix.os }}
+    
+    # "steps" adımları sırayla çalıştırılacak komutlardır.
     steps:
+      # 1. Adım: GitHub'daki fork'ladığınız repo kodlarını sunucuya indirir.
       - uses: actions/checkout@v4
       
-      # Sürüm belirtmeden package.json'daki packageManager (pnpm@10.29.3) değerini okumasını sağlıyoruz
+      # 2. Adım: pnpm paket yöneticisini kurar. Sürüm belirtmediğimiz için repo'daki package.json dosyasına bakar (pnpm@10.29.3).
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         
+      # 3. Adım: Node.js 20 sürümünü kurar ve pnpm önbelleğini (cache) aktif eder ki kurulumlar hızlansın.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'pnpm'
           
+      # 4. Adım: Rust toolchain'i kurar. Fluxer'ın native ses/ekran modülleri Rust ile yazıldığı için bu şart.
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         
+      # 5. Adım: Sadece Linux derlemesi çalışıyorsa burası çalışır. Electron ve WebRTC'nin ihtiyaç duyduğu sistem kütüphanelerini kurar.
       - name: Install Linux deps
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libdbus-1-dev libpulse-dev libevdev-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libdbus-1-dev libpulse-dev libevdev-dev libssl-dev libvpx-dev libopus-dev pkg-config clang libclang-dev
           
+      # 5.5. Adım: Sadece Mac derlemesi çalışıyorsa burası çalışır. WebRTC'nin derlenmesi için gereken video kodlayıcı bağımlılıklarını kurar.
+      - name: Install macOS deps
+        if: matrix.platform == 'mac'
+        run: brew install nasm yasm
+          
+      # 6. Adım: package.json içindeki tüm Node/Rust bağımlılıklarını kurar. --frozen-lockfile kilidi bozmaz.
       - run: pnpm install --frozen-lockfile
       
+      # 7. Adım: Kaynak kodları (TypeScript ve Rust) derler. ENV (Ortam Değişkenleri) ile production modunu açar.
+      # ELECTRON_ARCH değişkeni sayesinde her sunucu sadece kendi çip mimarisi için derleme yapar (Hataları önler).
       - name: Build desktop
-        working-directory: fluxer_desktop
+        working-directory: fluxer_desktop # Bu komutu ana klasör değil de fluxer_desktop klasöründe çalıştırır.
         env:
           NODE_ENV: production
           FLUXER_DESKTOP_PRODUCTION: 'true'
           PUBLIC_RELEASE_CHANNEL: stable
-          PUBLIC_BUILD_VERSION: ${{ github.ref_name }}
+          PUBLIC_BUILD_VERSION: ${{ github.ref_name }} # Etiket adını sürüm numarası yapar (Örn: v1.0.0)
           ELECTRON_ARCH: ${{ matrix.arch }}
         run: pnpm build
         
+      # 8. Adım: Sadece Mac derlemesi için electron-builder'ı çalıştırır.
+      # CSC_IDENTITY_AUTO_DISCOVERY: 'false' Apple geliştirici hesabı olmadan (imzasız) derlenebilmesini sağlar.
+      # ELECTRON_ARCH tekrar eklendi ki electron-builder sadece o mimariyi paketlemeye çalışsın.
       - name: Package (mac)
         if: matrix.platform == 'mac'
         working-directory: fluxer_desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          ELECTRON_ARCH: ${{ matrix.arch }}
         run: pnpm exec electron-builder --config electron-builder.config.cjs --mac --publish never
         
+      # 9. Adım: Windows ve Linux derlemeleri için electron-builder'ı çalıştırır.
+      # --${{ matrix.platform }} kısmı otomatik olarak --win veya --linux'a dönüşür.
+      # ELECTRON_ARCH tekrar eklendi ki electron-builder sadece o mimariyi paketlemeye çalışsın (Windows arm64 hatasını çözer).
       - name: Package (win/linux)
         if: matrix.platform != 'mac'
         working-directory: fluxer_desktop
+        env:
+          ELECTRON_ARCH: ${{ matrix.arch }}
         run: pnpm exec electron-builder --config electron-builder.config.cjs --${{ matrix.platform }} --publish never
         
+      # 10. Adım: Derleme bittikten sonra oluşan .dmg, .exe, .AppImage dosyalarını GitHub üzerinden indirilebilir "Artifact" olarak yükler.
       - uses: actions/upload-artifact@v4
         with:
-          name: cacha-fluxer-${{ matrix.platform }}-${{ matrix.arch }}
-          path: |
+          name: cacha-fluxer-${{ matrix.platform }}-${{ matrix.arch }} # Dosya setinin adı
+          path: | # Yüklenecek dosya uzantıları
             fluxer_desktop/dist/*.dmg
             fluxer_desktop/dist/*.exe
             fluxer_desktop/dist/*.AppImage
