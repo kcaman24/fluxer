@@ -1,0 +1,65 @@
+name: Build CaCha-Fluxer Desktop
+on:
+  push:
+    tags: ['v*'] # v1.0.0 gibi bir tag ittiğinizde çalışır
+  workflow_dispatch: # Manuel çalıştırma
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: mac
+            arch: arm64
+          - os: macos-13
+            platform: mac
+            arch: x64
+          - os: windows-latest
+            platform: win
+            arch: x64
+          - os: ubuntu-22.04
+            platform: linux
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: latest }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'pnpm' }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux deps
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libdbus-1-dev libpulse-dev libevdev-dev
+      - run: pnpm install --frozen-lockfile
+      - name: Build desktop
+        working-directory: fluxer_desktop
+        env:
+          NODE_ENV: production
+          FLUXER_DESKTOP_PRODUCTION: 'true'
+          PUBLIC_RELEASE_CHANNEL: stable
+          PUBLIC_BUILD_VERSION: ${{ github.ref_name }}
+        run: pnpm build
+      - name: Package (mac, signed)
+        if: matrix.platform == 'mac'
+        working-directory: fluxer_desktop
+        env:
+          # İmzasız derlemek için (Yerel test için ideal)
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: pnpm exec electron-builder --config electron-builder.config.cjs --mac --publish never
+      - name: Package (win/linux, unsigned)
+        if: matrix.platform != 'mac'
+        working-directory: fluxer_desktop
+        run: pnpm exec electron-builder --config electron-builder.config.cjs --${{ matrix.platform }} --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cacha-fluxer-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            fluxer_desktop/dist/*.dmg
+            fluxer_desktop/dist/*.exe
+            fluxer_desktop/dist/*.AppImage
+            fluxer_desktop/dist/*.deb

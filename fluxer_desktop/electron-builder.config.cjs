@@ -7,11 +7,11 @@ const os = require('node:os');
 const path = require('node:path');
 const {promisify} = require('node:util');
 const execFileAsync = promisify(execFile);
-const productName = isCanary ? 'Fluxer Canary' : 'Fluxer';
-const appId = isCanary ? 'app.fluxer.canary' : 'app.fluxer';
+const productName = isCanary ? 'CaCha-Fluxer Canary' : 'CaCha-Fluxer';
+const appId = isCanary ? 'shop.desttek.cacha.canary' : 'shop.desttek.cacha';
 const iconDir = isCanary ? 'icons-canary' : 'icons-stable';
-const packageName = isCanary ? 'fluxer_desktop_canary' : 'fluxer_desktop';
-const linuxPackageName = isCanary ? 'fluxer-canary' : 'fluxer';
+const packageName = isCanary ? 'cacha_fluxer_canary' : 'cacha_fluxer';
+const linuxPackageName = isCanary ? 'cacha-fluxer-canary' : 'cacha-fluxer';
 const desktopBuildVariant = process.env.FLUXER_DESKTOP_BUILD_VARIANT || process.env.DESKTOP_VARIANT || 'default';
 const windowsGameCaptureModuleEnabled =
 	desktopBuildVariant === 'windows-game-capture' || process.env.FLUXER_WINDOWS_GAME_CAPTURE_MODULE_ENABLED === 'true';
