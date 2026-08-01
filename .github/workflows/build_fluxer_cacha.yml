@@ -1,5 +1,5 @@
 # ==============================================================================
-# CaCha-Fluxer Desktop Build Workflow (Final)
+# CaCha-Fluxer Desktop Build Workflow (Final v2)
 # Windows (x64), macOS (ARM64), Linux (x64) için derleme yapar
 # ==============================================================================
 
@@ -18,19 +18,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS - Apple Silicon (M1/M2/M3) - arm64
           - os: macos-14
             platform: mac
             arch: arm64
             rust_target: aarch64-apple-darwin
           
-          # Windows - x64
           - os: windows-latest
             platform: win
             arch: x64
             rust_target: x86_64-pc-windows-msvc
           
-          # Linux - x64
           - os: ubuntu-22.04
             platform: linux
             arch: x64
@@ -73,10 +70,9 @@ jobs:
       # ======================================================================
       
       # --- Linux bağımlılıkları ---
-      # libfido2-dev: WebAuthn için
-      # libclang-dev: Rust bindgen için (fido/es384.h hatasını çözer)
+      # libfido2-udev, libfido2-dev: WebAuthn için
+      # llvm, libclang-dev: Rust bindgen'in fido/es384.h dosyasını bulabilmesi için
       # libvpx-dev, libopus-dev: WebRTC için
-      # libgtk-3-dev, libwebkit2gtk-4.1-dev: Electron için
       - name: Install Linux system dependencies
         if: matrix.platform == 'linux'
         run: |
@@ -84,6 +80,7 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             cmake \
+            llvm \
             clang \
             libclang-dev \
             pkg-config \
@@ -101,7 +98,8 @@ jobs:
             libopus-dev \
             libudev-dev \
             libpcsclite-dev \
-            libfido2-dev
+            libfido2-dev \
+            libfido2-udev
 
       # --- macOS bağımlılıkları ---
       - name: Install macOS system dependencies
@@ -123,25 +121,10 @@ jobs:
         run: pnpm install
 
       # ======================================================================
-      # ADIM 7: fluxer_desktop/node_modules kontrolü (debug)
+      # ADIM 7: Kaynak kodu derle
       # ======================================================================
-      - name: Verify node_modules exists
-        shell: bash
-        run: |
-          echo "=== Kök dizin node_modules ==="
-          ls node_modules/.pnpm 2>/dev/null | head -5 || echo "HATA: Kök node_modules yok!"
-          echo ""
-          echo "=== fluxer_desktop/node_modules ==="
-          ls fluxer_desktop/node_modules 2>/dev/null | head -5 || echo "HATA: fluxer_desktop/node_modules yok!"
-          echo ""
-          echo "=== @fluxer paketleri ==="
-          ls node_modules/.pnpm 2>/dev/null | grep "@fluxer" | head -10 || echo "HATA: @fluxer paketleri bulunamadı!"
-
-      # ======================================================================
-      # ADIM 8: Kaynak kodu derle
-      # ======================================================================
-      # Linux için BINDGEN_EXTRA_CLANG_ARGS ayarla (fido/es384.h hatasını çözer)
-      # macOS için SDKROOT ayarla
+      # Linux için LIBCLANG_PATH ve BINDGEN_EXTRA_CLANG_ARGS ayarla (fido/es384.h hatasını çözer)
+      # macOS için MACOSX_DEPLOYMENT_TARGET ve SDKROOT ayarla (webrtc camera-native hatasını çözer)
       - name: Build desktop app
         working-directory: fluxer_desktop
         env:
@@ -152,13 +135,15 @@ jobs:
           ELECTRON_ARCH: ${{ matrix.arch }}
           RUST_BACKTRACE: 1
           # Linux: clang'a sistem header'larını bulması için yol ver
+          LIBCLANG_PATH: ${{ matrix.platform == 'linux' && '/usr/lib/llvm-14/lib' || '' }}
           BINDGEN_EXTRA_CLANG_ARGS: ${{ matrix.platform == 'linux' && '-I/usr/include -I/usr/include/x86_64-linux-gnu' || '' }}
-          # macOS: SDK yolunu ayarla
+          # macOS: SDK ve deployment target ayarla
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform == 'mac' && '12.0' || '' }}
           SDKROOT: ${{ matrix.platform == 'mac' && '/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk' || '' }}
         run: pnpm build
 
       # ======================================================================
-      # ADIM 9: Uygulamayı paketle
+      # ADIM 8: Uygulamayı paketle
       # ======================================================================
       
       # --- macOS paketleme ---
@@ -168,6 +153,8 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           ELECTRON_ARCH: ${{ matrix.arch }}
+          MACOSX_DEPLOYMENT_TARGET: '12.0'
+          SDKROOT: '/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk'
         run: pnpm exec electron-builder --config electron-builder.config.cjs --mac --publish never
 
       # --- Windows ve Linux paketleme ---
@@ -179,47 +166,7 @@ jobs:
         run: pnpm exec electron-builder --config electron-builder.config.cjs --${{ matrix.platform }} --publish never
 
       # ======================================================================
-      # ADIM 10: Çıktı dosyalarını listele (debug)
-      # ======================================================================
-      - name: List all output files (debug)
-        if: always()
-        shell: bash
-        working-directory: fluxer_desktop
-        run: |
-          echo "========================================="
-          echo "ÇIKTI DOSYALARI ARANIYOR..."
-          echo "========================================="
-          echo ""
-          echo "--- dist/ klasörü ---"
-          find dist -type f 2>/dev/null || echo "(yok)"
-          echo ""
-          echo "--- dist-electron/ klasörü ---"
-          find dist-electron -type f 2>/dev/null || echo "(yok)"
-          echo ""
-          echo "--- release/ klasörü ---"
-          find release -type f 2>/dev/null || echo "(yok)"
-          echo ""
-          echo "--- build/ klasörü ---"
-          find build -type f 2>/dev/null || echo "(yok)"
-          echo ""
-          echo "--- Tüm .exe dosyaları ---"
-          find . -name "*.exe" -type f 2>/dev/null || echo "(yok)"
-          echo ""
-          echo "--- Tüm .dmg dosyaları ---"
-          find . -name "*.dmg" -type f 2>/dev/null || echo "(yok)"
-          echo ""
-          echo "--- Tüm .AppImage dosyaları ---"
-          find . -name "*.AppImage" -type f 2>/dev/null || echo "(yok)"
-          echo ""
-          echo "--- Tüm .deb dosyaları ---"
-          find . -name "*.deb" -type f 2>/dev/null || echo "(yok)"
-          echo ""
-          echo "========================================="
-          echo "ARAMA TAMAMLANDI"
-          echo "========================================="
-
-      # ======================================================================
-      # ADIM 11: Çıktıları (Artifacts) GitHub'a yükle
+      # ADIM 9: Çıktıları (Artifacts) GitHub'a yükle
       # ======================================================================
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
