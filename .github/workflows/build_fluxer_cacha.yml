@@ -39,7 +39,7 @@ jobs:
       # 1. Adım: GitHub'daki fork'ladığınız repo kodlarını sunucuya indirir.
       - uses: actions/checkout@v4
       
-      # 2. Adım: pnpm paket yöneticisini kurar. Sürüm belirtmediğimiz için repo'daki package.json dosyasına bakar (pnpm@10.29.3).
+      # 2. Adım: pnpm paket yöneticisini kurar.
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         
@@ -50,40 +50,43 @@ jobs:
           node-version: '20'
           cache: 'pnpm'
           
-      # 4. Adım: Rust toolchain'i kurar. Fluxer'ın native ses/ekran modülleri Rust ile yazıldığı için bu şart.
+      # 4. Adım: Rust toolchain'i kurar. Orijinal repo 1.93.0 istediği için onu sabitliyoruz.
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93.0"
         
-      # 5. Adım: Sadece Linux derlemesi çalışıyorsa burası çalışır. Electron ve WebRTC'nin ihtiyaç duyduğu sistem kütüphanelerini kurar.
+      # 5. Adım: Sadece Linux derlemesi çalışıyorsa burası çalışır. 
+      # WebRTC ve WebAuthn(libfido2) için gereken tüm sistem kütüphanelerini kurar.
       - name: Install Linux deps
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libdbus-1-dev libpulse-dev libevdev-dev libssl-dev libvpx-dev libopus-dev pkg-config clang libclang-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libdbus-1-dev libpulse-dev libevdev-dev libssl-dev libvpx-dev libopus-dev pkg-config clang libclang-dev libudev-dev libpcsclite-dev
           
-      # 5.5. Adım: Sadece Mac derlemesi çalışıyorsa burası çalışır. WebRTC'nin derlenmesi için gereken video kodlayıcı bağımlılıklarını kurar.
+      # 5.5. Adım: Sadece Mac derlemesi çalışıyorsa burası çalışır. 
+      # WebRTC'nin video/camera özelliklerinin derlenmesi için gereken düşük seviyeli araçları kurar.
       - name: Install macOS deps
         if: matrix.platform == 'mac'
-        run: brew install nasm yasm
+        run: brew install nasm yasm pkg-config cmake
           
-      # 6. Adım: package.json içindeki tüm Node/Rust bağımlılıklarını kurar. --frozen-lockfile kilidi bozmaz.
+      # 6. Adım: package.json içindeki tüm Node/Rust bağımlılıklarını kurar.
       - run: pnpm install --frozen-lockfile
       
-      # 7. Adım: Kaynak kodları (TypeScript ve Rust) derler. ENV (Ortam Değişkenleri) ile production modunu açar.
-      # ELECTRON_ARCH değişkeni sayesinde her sunucu sadece kendi çip mimarisi için derleme yapar (Hataları önler).
+      # 7. Adım: Kaynak kodları (TypeScript ve Rust) derler. 
+      # ELECTRON_ARCH değişkeni sayesinde her sunucu sadece kendi çip mimarisi için derleme yapar.
       - name: Build desktop
-        working-directory: fluxer_desktop # Bu komutu ana klasör değil de fluxer_desktop klasöründe çalıştırır.
+        working-directory: fluxer_desktop 
         env:
           NODE_ENV: production
           FLUXER_DESKTOP_PRODUCTION: 'true'
           PUBLIC_RELEASE_CHANNEL: stable
-          PUBLIC_BUILD_VERSION: ${{ github.ref_name }} # Etiket adını sürüm numarası yapar (Örn: v1.0.0)
+          PUBLIC_BUILD_VERSION: ${{ github.ref_name }}
           ELECTRON_ARCH: ${{ matrix.arch }}
         run: pnpm build
         
       # 8. Adım: Sadece Mac derlemesi için electron-builder'ı çalıştırır.
       # CSC_IDENTITY_AUTO_DISCOVERY: 'false' Apple geliştirici hesabı olmadan (imzasız) derlenebilmesini sağlar.
-      # ELECTRON_ARCH tekrar eklendi ki electron-builder sadece o mimariyi paketlemeye çalışsın.
       - name: Package (mac)
         if: matrix.platform == 'mac'
         working-directory: fluxer_desktop
@@ -93,8 +96,7 @@ jobs:
         run: pnpm exec electron-builder --config electron-builder.config.cjs --mac --publish never
         
       # 9. Adım: Windows ve Linux derlemeleri için electron-builder'ı çalıştırır.
-      # --${{ matrix.platform }} kısmı otomatik olarak --win veya --linux'a dönüşür.
-      # ELECTRON_ARCH tekrar eklendi ki electron-builder sadece o mimariyi paketlemeye çalışsın (Windows arm64 hatasını çözer).
+      # ELECTRON_ARCH tekrar eklendi ki electron-builder sadece o mimariyi paketlemeye çalışsın.
       - name: Package (win/linux)
         if: matrix.platform != 'mac'
         working-directory: fluxer_desktop
@@ -105,8 +107,8 @@ jobs:
       # 10. Adım: Derleme bittikten sonra oluşan .dmg, .exe, .AppImage dosyalarını GitHub üzerinden indirilebilir "Artifact" olarak yükler.
       - uses: actions/upload-artifact@v4
         with:
-          name: cacha-fluxer-${{ matrix.platform }}-${{ matrix.arch }} # Dosya setinin adı
-          path: | # Yüklenecek dosya uzantıları
+          name: cacha-fluxer-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
             fluxer_desktop/dist/*.dmg
             fluxer_desktop/dist/*.exe
             fluxer_desktop/dist/*.AppImage
