@@ -109,7 +109,9 @@ jobs:
       # NOT: CFLAGS / CXXFLAGS / C_INCLUDE_PATH / CPLUS_INCLUDE_PATH kasıtlı
       # olarak set edilmiyor — bunlar cxx-build gibi diger native crate'lerin
       # derlemesini bozuyordu (stdlib.h bulunamadı hatası). bindgen icin
-      # sadece LIBCLANG_PATH ve BINDGEN_EXTRA_CLANG_ARGS yeterli.
+      # sadece LIBCLANG_PATH ve BINDGEN_EXTRA_CLANG_ARGS yeterli. unset + env -u
+      # kombinasyonu, bu degiskenlerin nereden gelirse gelsin pnpm build'e
+      # sizmamasini garanti ediyor.
       - name: Build desktop app
         working-directory: fluxer_desktop
         shell: bash
@@ -130,7 +132,7 @@ jobs:
           unset CFLAGS CXXFLAGS C_INCLUDE_PATH CPLUS_INCLUDE_PATH
           echo "--- temizlik sonrasi ilgili env degiskenleri ---"
           env | grep -E "CFLAGS|CXXFLAGS|INCLUDE_PATH" || echo "temiz"
-          pnpm build
+          env -u CFLAGS -u CXXFLAGS -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH pnpm build
 
       # ======================================================================
       # ADIM 8: Uygulamayı paketle
