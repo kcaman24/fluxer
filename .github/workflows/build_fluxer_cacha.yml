@@ -1,8 +1,8 @@
 # ==============================================================================
-# CaCha-Fluxer Desktop Build Workflow (macOS arm64 - Apple Silicon)
+# CaCha-Fluxer Desktop Build Workflow (Windows x64, macOS arm64, Linux x64)
 # ==============================================================================
 
-name: Build CaCha-Fluxer (macOS)
+name: Build CaCha-Fluxer Desktop
 
 on:
   push:
@@ -11,8 +11,24 @@ on:
 
 jobs:
   build:
-    name: Build (macos arm64)
-    runs-on: macos-14
+    name: Build (${{ matrix.platform }} ${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            arch: x64
+            rust_target: x86_64-pc-windows-msvc
+          - os: macos-14
+            platform: mac
+            arch: arm64
+            rust_target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            platform: linux
+            arch: x64
+            rust_target: x86_64-unknown-linux-gnu
 
     steps:
       # ======================================================================
@@ -28,7 +44,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.93.0"
-          targets: aarch64-apple-darwin
+          targets: ${{ matrix.rust_target }}
 
       # ======================================================================
       # ADIM 3: Node.js 20 kur
@@ -46,38 +62,84 @@ jobs:
         run: corepack enable && corepack prepare pnpm@latest --activate
 
       # ======================================================================
-      # ADIM 5: macOS sistem bağımlılıklarını kur (Homebrew)
+      # ADIM 5a: Windows - Python kur (bazı native addon build script'leri icin)
       # ======================================================================
-      # NOT: 'pipewire' formulu kasitli olarak listede YOK - Homebrew'da
-      # sadece Linux icin destekleniyor (formulae.brew.sh: "Requires: Linux").
-      # '|| true' de kullanilmiyor - gercek kurulum hatalari sessizce
-      # yutulmasin diye.
+      - name: Setup Python (Windows)
+        if: matrix.platform == 'win'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # ======================================================================
+      # ADIM 5b: Linux - guncel libfido2 + pipewire icin PPA ekle
+      # ======================================================================
+      # jammy'nin apt deposundaki libfido2 (1.10.0) ve pipewire (0.3.48) eski;
+      # libfido2-sys ve libspa Rust crate'leri daha yeni C API bekliyor
+      # (fido/es384.h, spa_meta_region_is_valid vb.). Upstream PPA'lardan
+      # guncel surumleri kuruyoruz.
+      - name: Add upstream PPAs (Linux)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:yubico/stable
+          sudo add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
+          sudo apt-get update
+
+      # ======================================================================
+      # ADIM 5c: Linux sistem bağımlılıklarını kur
+      # ======================================================================
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get install -y \
+            build-essential cmake llvm clang libclang-dev pkg-config python3 \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libasound2-dev libdbus-1-dev libpulse-dev \
+            libevdev-dev libssl-dev libvpx-dev libopus-dev libudev-dev \
+            libpcsclite-dev libfido2-1 libfido2-dev fido2-tools \
+            libpipewire-0.3-0 libpipewire-0.3-dev libspa-0.2-dev libva-dev
+
+      # ======================================================================
+      # ADIM 5d: Linux - fido2 + pipewire header dogrulama (erken hata yakalama)
+      # ======================================================================
+      - name: Verify native library headers (Linux)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          test -f /usr/include/fido/es384.h && echo "es384.h OK" || (echo "es384.h MISSING" && exit 1)
+          pkg-config --modversion libpipewire-0.3
+          grep -q "spa_meta_region_is_valid" /usr/include/spa-0.2/spa/buffer/meta.h \
+            && echo "spa_meta_region_is_valid OK" \
+            || (echo "spa_meta_region_is_valid MISSING" && exit 1)
+
+      # ======================================================================
+      # ADIM 5e: macOS sistem bağımlılıklarını kur (Homebrew)
+      # ======================================================================
+      # NOT: 'pipewire' formulu KASITLI olarak listede yok - Homebrew'da
+      # sadece Linux'ta destekleniyor. '|| true' de kullanmiyoruz ki gercek
+      # kurulum hatalari sessizce yutulmasin.
       - name: Install macOS system dependencies
+        if: matrix.platform == 'mac'
         shell: bash
         run: |
           brew update
-          brew install \
-            cmake \
-            pkg-config \
-            libfido2 \
-            opus \
-            libvpx \
-            ffmpeg
+          brew install cmake pkg-config libfido2 opus libvpx ffmpeg
 
       # ======================================================================
-      # ADIM 5b: libfido2 header dogrulama (erken hata yakalama)
+      # ADIM 5f: macOS - libfido2 header dogrulama + pkg-config yolu
       # ======================================================================
-      - name: Verify fido2 headers
+      - name: Verify fido2 headers (macOS)
+        if: matrix.platform == 'mac'
         shell: bash
         run: |
           FIDO2_PREFIX=$(brew --prefix libfido2)
-          echo "libfido2 prefix: $FIDO2_PREFIX"
           if [ -f "$FIDO2_PREFIX/include/fido/es384.h" ]; then
             echo "es384.h OK"
           else
-            echo "es384.h MISSING - libfido2 dogru kurulmamis olabilir"
-            ls -la "$FIDO2_PREFIX/include/fido/" 2>/dev/null || echo "fido/ dizini de yok"
-            exit 1
+            echo "es384.h MISSING"; exit 1
           fi
           echo "PKG_CONFIG_PATH_EXTRA=$FIDO2_PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
 
@@ -89,38 +151,21 @@ jobs:
         run: pnpm install
 
       # ======================================================================
-      # ADIM 6b: Build oncesi diagnostik (disk / bellek / Xcode)
-      # ======================================================================
-      - name: Pre-build diagnostics
-        shell: bash
-        run: |
-          echo "--- Disk kullanimi ---"
-          df -h /
-          echo "--- Bellek (fiziksel) ---"
-          sysctl hw.memsize
-          echo "--- Aktif Xcode ---"
-          xcode-select -p
-          xcrun --show-sdk-path
-
-      # ======================================================================
       # ADIM 7: Kaynak kodu derle
       # ======================================================================
-      # NOT 1: CFLAGS/CXXFLAGS/C_INCLUDE_PATH/CPLUS_INCLUDE_PATH kasitli
-      # olarak set edilmiyor + unset ediliyor - Linux derlemesinde bu
-      # degiskenlerin cxx-build gibi crate'leri kirdigini gormustuk.
+      # Linux: bindgen fido2 header'ini bulsun diye LIBCLANG_PATH + 
+      # BINDGEN_EXTRA_CLANG_ARGS gerekiyor. CFLAGS/CXXFLAGS genel olarak
+      # SET EDILMIYOR - onceden bunlarin cxx-build gibi crate'lerin
+      # derlemesini kirdigini gorduk (stdlib.h bulunamadi hatasi); unset +
+      # env -u ile de nereden gelirse gelsin sizmalarini engelliyoruz.
       #
-      # NOT 2: CARGO_BUILD_JOBS=1 GECICI bir teshis onlemi - webrtc-sys
-      # yuzlerce .cpp dosyasini paralel derliyor, bir dosya basarisiz
-      # oldugunda cc-rs'in ozet mesaji baska dosyalarin ayni anda uretilen
-      # ciktisiyla karisip gercek clang hatasini gizleyebiliyor. Bunu 1'e
-      # sabitleyerek dosyalari sirayla derletip hatayi net gormeyi
-      # hedefliyoruz. Gercek hata bulunup duzeltildikten SONRA bu satiri
-      # kaldirip paralel derlemeye don (build suresi 2-3x uzuyor).
-      #
-      # NOT 3: Cikti hem terminale hem /tmp/fluxer-build.log dosyasina
-      # yaziliyor (tee) ve ADIM 7b'de build basarisiz olsa bile artifact
-      # olarak yukleniyor - GitHub Actions log arayuzunun cok uzun satirlari
-      # kesme/gizleme ihtimaline karsi ham log'a her zaman erisebiliyoruz.
+      # macOS: webrtc-sys, cxx crate'ini -std=c++20 ile derliyor ama
+      # cxx v1.0.194'un rust::Slice::iterator'i Xcode 15.4/MacOSX14.5 SDK'nin
+      # libc++'indaki C++20 contiguous_iterator concept kontrolunu
+      # karsilamiyor (pointer_traits::element_type/to_address eksik).
+      # CXXFLAGS_aarch64_apple_darwin ile -std=c++17 zorlayip bu concept
+      # kontrolunu hic tetiklememis oluyoruz (cxx.h, C++17'de
+      # random_access_iterator_tag kullaniyor, sorun cikmiyor).
       - name: Build desktop app
         working-directory: fluxer_desktop
         shell: bash
@@ -129,53 +174,43 @@ jobs:
           FLUXER_DESKTOP_PRODUCTION: 'true'
           PUBLIC_RELEASE_CHANNEL: stable
           PUBLIC_BUILD_VERSION: ${{ github.ref_name }}
-          ELECTRON_ARCH: arm64
-          MACOSX_DEPLOYMENT_TARGET: '11.0'
-          PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig:${{ env.PKG_CONFIG_PATH_EXTRA }}
+          ELECTRON_ARCH: ${{ matrix.arch }}
+          LIBCLANG_PATH: ${{ matrix.platform == 'linux' && '/usr/lib/llvm-14/lib' || '' }}
+          BINDGEN_EXTRA_CLANG_ARGS: ${{ matrix.platform == 'linux' && '-I/usr/include -I/usr/include/x86_64-linux-gnu' || '' }}
+          PKG_CONFIG_PATH: ${{ matrix.platform == 'linux' && '/usr/lib/x86_64-linux-gnu/pkgconfig' || matrix.platform == 'mac' && format('/opt/homebrew/lib/pkgconfig:{0}', env.PKG_CONFIG_PATH_EXTRA) || '' }}
+          PKG_CONFIG_LIBDIR: ${{ matrix.platform == 'linux' && '/usr/lib/x86_64-linux-gnu/pkgconfig' || '' }}
           PKG_CONFIG_ALLOW_SYSTEM_CFLAGS: 1
           PKG_CONFIG_ALLOW_SYSTEM_LIBS: 1
-          # webrtc-sys build.rs -std=c++20 zorluyor, ama cxx v1.0.194'un
-          # rust::Slice::iterator'i Xcode 15.4 / MacOSX14.5 SDK'sindeki
-          # libc++'in C++20 contiguous_iterator concept kontrolunu
-          # karsilamiyor (to_address/pointer_traits::element_type eksik).
-          # Hedef-spesifik CXXFLAGS son -std bayragi olarak eklenir ve
-          # clang'in "son -std kazanir" davranisiyla c++20'yi c++17'ye
-          # dusurur - boylece contiguous_iterator kontrolu hic tetiklenmez
-          # (cxx.h, C++17'de random_access_iterator_tag kullaniyor).
-          CXXFLAGS_aarch64_apple_darwin: "-std=c++17"
+          LIBRARY_PATH: ${{ matrix.platform == 'linux' && '/usr/lib/x86_64-linux-gnu' || '' }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform == 'mac' && '11.0' || '' }}
+          CXXFLAGS_aarch64_apple_darwin: ${{ matrix.platform == 'mac' && '-std=c++17' || '' }}
         run: |
           unset CFLAGS CXXFLAGS C_INCLUDE_PATH CPLUS_INCLUDE_PATH
-          echo "--- temizlik sonrasi ilgili env degiskenleri ---"
-          env | grep -E "CFLAGS|CXXFLAGS|INCLUDE_PATH" || echo "temiz"
           env -u CFLAGS -u CXXFLAGS -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH pnpm build
 
       # ======================================================================
-      # ADIM 7b: Build log'unu her durumda artifact olarak yukle
+      # ADIM 8: Uygulamayı paketle
       # ======================================================================
-      - name: Upload full build log
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: macos-arm64-build-log
-          path: /tmp/fluxer-build.log
-          retention-days: 7
-
-      # ======================================================================
-      # ADIM 8: Uygulamayı paketle (imzasız - Apple Developer sertifikası yok)
-      # ======================================================================
-      # NOT: CSC_IDENTITY_AUTO_DISCOVERY=false, electron-builder'in Keychain'de
-      # olmayan bir imzalama sertifikasi aramasini engeller. Imzasiz .dmg/.zip
-      # calisir ama kullanicilar ilk acilista Gatekeeper uyarisi gorur
-      # (sag tik > Ac ile gecilebilir). Kendi Apple Developer sertifikan
-      # varsa CSC_LINK / CSC_KEY_PASSWORD secret'lari eklenip bu satir
-      # kaldirilmali - notarization icin de ayri bir adim gerekir.
+      # macOS: CSC_IDENTITY_AUTO_DISCOVERY=false, Apple Developer sertifikasi
+      # olmadigi icin electron-builder'in Keychain'de imzalama sertifikasi
+      # aramasini engeller. Sonuc imzasiz .dmg - kullanicilar Gatekeeper
+      # uyarisinda "sag tik > Ac" ile gecebilir.
       - name: Package macOS app
+        if: matrix.platform == 'mac'
         working-directory: fluxer_desktop
         shell: bash
         env:
           ELECTRON_ARCH: arm64
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: pnpm exec electron-builder --config electron-builder.config.cjs --mac --arm64 --publish never
+
+      - name: Package Windows/Linux app
+        if: matrix.platform != 'mac'
+        working-directory: fluxer_desktop
+        shell: bash
+        env:
+          ELECTRON_ARCH: ${{ matrix.arch }}
+        run: pnpm exec electron-builder --config electron-builder.config.cjs --${{ matrix.platform }} --publish never
 
       # ======================================================================
       # ADIM 9: Çıktıları (Artifacts) GitHub'a yükle
@@ -184,10 +219,14 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cacha-fluxer-macos-arm64
+          name: cacha-fluxer-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
+            **/*.exe
             **/*.dmg
             **/*.zip
             **/*.pkg
+            **/*.AppImage
+            **/*.deb
+            **/*.rpm
           if-no-files-found: warn
           retention-days: 90
