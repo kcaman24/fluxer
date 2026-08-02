@@ -134,12 +134,20 @@ jobs:
           PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig:${{ env.PKG_CONFIG_PATH_EXTRA }}
           PKG_CONFIG_ALLOW_SYSTEM_CFLAGS: 1
           PKG_CONFIG_ALLOW_SYSTEM_LIBS: 1
-          CARGO_BUILD_JOBS: '1'
+          # webrtc-sys build.rs -std=c++20 zorluyor, ama cxx v1.0.194'un
+          # rust::Slice::iterator'i Xcode 15.4 / MacOSX14.5 SDK'sindeki
+          # libc++'in C++20 contiguous_iterator concept kontrolunu
+          # karsilamiyor (to_address/pointer_traits::element_type eksik).
+          # Hedef-spesifik CXXFLAGS son -std bayragi olarak eklenir ve
+          # clang'in "son -std kazanir" davranisiyla c++20'yi c++17'ye
+          # dusurur - boylece contiguous_iterator kontrolu hic tetiklenmez
+          # (cxx.h, C++17'de random_access_iterator_tag kullaniyor).
+          CXXFLAGS_aarch64_apple_darwin: "-std=c++17"
         run: |
           unset CFLAGS CXXFLAGS C_INCLUDE_PATH CPLUS_INCLUDE_PATH
-          set -o pipefail
-          env -u CFLAGS -u CXXFLAGS -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH \
-            pnpm build 2>&1 | tee /tmp/fluxer-build.log
+          echo "--- temizlik sonrasi ilgili env degiskenleri ---"
+          env | grep -E "CFLAGS|CXXFLAGS|INCLUDE_PATH" || echo "temiz"
+          env -u CFLAGS -u CXXFLAGS -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH pnpm build
 
       # ======================================================================
       # ADIM 7b: Build log'unu her durumda artifact olarak yukle
