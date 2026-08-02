@@ -92,13 +92,31 @@ jobs:
         run: pnpm install
 
       # ======================================================================
+      # ADIM 6b: Build oncesi diagnostik (disk / bellek)
+      # ======================================================================
+      # NOT: "exit code 1, sifir cikti" imzasi bazen disk dolu ya da bellek
+      # yetersizligi durumunda gorulur. Build'den once durumu logluyoruz ki
+      # bu ihtimali gozle kontrol edebilelim.
+      - name: Pre-build diagnostics
+        shell: bash
+        run: |
+          echo "--- Disk kullanimi ---"
+          df -h /
+          echo "--- Bellek (fiziksel) ---"
+          sysctl hw.memsize
+          echo "--- vm_stat ---"
+          vm_stat
+          echo "--- Aktif Xcode ---"
+          xcode-select -p
+          xcrun --show-sdk-path
+
+      # ======================================================================
       # ADIM 7: Kaynak kodu derle
       # ======================================================================
-      # NOT: Linux'taki tecrubeden ders alarak CFLAGS/CXXFLAGS/C_INCLUDE_PATH
-      # gibi genel env degiskenlerini KASITLI olarak set ETMIYORUZ - bunlar
-      # cxx-build gibi native crate'lerin derlemesini bozabiliyor
-      # (stdlib.h / TargetConditionals.h bulunamadi tarzi hatalar). Sadece
-      # bindgen'e ozel PKG_CONFIG ayarlarini veriyoruz.
+      # NOT: Cikti hem terminale hem de bir log dosyasina yaziliyor (tee).
+      # Boylece GitHub Actions log arayuzunun cok uzun satirlari kesmesi/
+      # kaybetmesi ihtimaline karsi ham log dosyasini ADIM 7b'de artifact
+      # olarak indirebiliyoruz - gercek derleyici hatasini kacirmayacagiz.
       - name: Build desktop app
         working-directory: fluxer_desktop
         shell: bash
@@ -114,10 +132,20 @@ jobs:
           PKG_CONFIG_ALLOW_SYSTEM_LIBS: 1
         run: |
           unset CFLAGS CXXFLAGS C_INCLUDE_PATH CPLUS_INCLUDE_PATH
-          echo "--- temizlik sonrasi ilgili env degiskenleri ---"
-          env | grep -E "CFLAGS|CXXFLAGS|INCLUDE_PATH" || echo "temiz"
-          env -u CFLAGS -u CXXFLAGS -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH pnpm build
+          set -o pipefail
+          env -u CFLAGS -u CXXFLAGS -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH \
+            pnpm build 2>&1 | tee /tmp/fluxer-build.log
 
+      # ======================================================================
+      # ADIM 7b: Build log'unu her durumda artifact olarak yukle
+      # ======================================================================
+      - name: Upload full build log
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-arm64-build-log
+          path: /tmp/fluxer-build.log
+          retention-days: 7
       # ======================================================================
       # ADIM 8: Uygulamayı paketle (imzasız - Apple Developer sertifikası yok)
       # ======================================================================
