@@ -48,13 +48,10 @@ jobs:
       # ======================================================================
       # ADIM 5: macOS sistem bağımlılıklarını kur (Homebrew)
       # ======================================================================
-      # NOT: 'pipewire' formulu kasitli olarak KALDIRILDI - Homebrew'da
+      # NOT: 'pipewire' formulu kasitli olarak listede YOK - Homebrew'da
       # sadece Linux icin destekleniyor (formulae.brew.sh: "Requires: Linux").
-      # Onceki denemede listeye eklenmisti ve brew install tum formulleri
-      # tek seferde cozumledigi icin pipewire cozumlenemeyince komut
-      # basarisiz oldu; sonundaki '|| true' bu hatayi sessizce yuttugu icin
-      # libfido2 dahil HICBIR PAKET KURULMADI. Artik '|| true' yok - gercek
-      # hatalar sessizce yutulmuyor.
+      # '|| true' de kullanilmiyor - gercek kurulum hatalari sessizce
+      # yutulmasin diye.
       - name: Install macOS system dependencies
         shell: bash
         run: |
@@ -92,11 +89,8 @@ jobs:
         run: pnpm install
 
       # ======================================================================
-      # ADIM 6b: Build oncesi diagnostik (disk / bellek)
+      # ADIM 6b: Build oncesi diagnostik (disk / bellek / Xcode)
       # ======================================================================
-      # NOT: "exit code 1, sifir cikti" imzasi bazen disk dolu ya da bellek
-      # yetersizligi durumunda gorulur. Build'den once durumu logluyoruz ki
-      # bu ihtimali gozle kontrol edebilelim.
       - name: Pre-build diagnostics
         shell: bash
         run: |
@@ -104,8 +98,6 @@ jobs:
           df -h /
           echo "--- Bellek (fiziksel) ---"
           sysctl hw.memsize
-          echo "--- vm_stat ---"
-          vm_stat
           echo "--- Aktif Xcode ---"
           xcode-select -p
           xcrun --show-sdk-path
@@ -113,10 +105,22 @@ jobs:
       # ======================================================================
       # ADIM 7: Kaynak kodu derle
       # ======================================================================
-      # NOT: Cikti hem terminale hem de bir log dosyasina yaziliyor (tee).
-      # Boylece GitHub Actions log arayuzunun cok uzun satirlari kesmesi/
-      # kaybetmesi ihtimaline karsi ham log dosyasini ADIM 7b'de artifact
-      # olarak indirebiliyoruz - gercek derleyici hatasini kacirmayacagiz.
+      # NOT 1: CFLAGS/CXXFLAGS/C_INCLUDE_PATH/CPLUS_INCLUDE_PATH kasitli
+      # olarak set edilmiyor + unset ediliyor - Linux derlemesinde bu
+      # degiskenlerin cxx-build gibi crate'leri kirdigini gormustuk.
+      #
+      # NOT 2: CARGO_BUILD_JOBS=1 GECICI bir teshis onlemi - webrtc-sys
+      # yuzlerce .cpp dosyasini paralel derliyor, bir dosya basarisiz
+      # oldugunda cc-rs'in ozet mesaji baska dosyalarin ayni anda uretilen
+      # ciktisiyla karisip gercek clang hatasini gizleyebiliyor. Bunu 1'e
+      # sabitleyerek dosyalari sirayla derletip hatayi net gormeyi
+      # hedefliyoruz. Gercek hata bulunup duzeltildikten SONRA bu satiri
+      # kaldirip paralel derlemeye don (build suresi 2-3x uzuyor).
+      #
+      # NOT 3: Cikti hem terminale hem /tmp/fluxer-build.log dosyasina
+      # yaziliyor (tee) ve ADIM 7b'de build basarisiz olsa bile artifact
+      # olarak yukleniyor - GitHub Actions log arayuzunun cok uzun satirlari
+      # kesme/gizleme ihtimaline karsi ham log'a her zaman erisebiliyoruz.
       - name: Build desktop app
         working-directory: fluxer_desktop
         shell: bash
@@ -130,6 +134,7 @@ jobs:
           PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig:${{ env.PKG_CONFIG_PATH_EXTRA }}
           PKG_CONFIG_ALLOW_SYSTEM_CFLAGS: 1
           PKG_CONFIG_ALLOW_SYSTEM_LIBS: 1
+          CARGO_BUILD_JOBS: '1'
         run: |
           unset CFLAGS CXXFLAGS C_INCLUDE_PATH CPLUS_INCLUDE_PATH
           set -o pipefail
@@ -146,6 +151,7 @@ jobs:
           name: macos-arm64-build-log
           path: /tmp/fluxer-build.log
           retention-days: 7
+
       # ======================================================================
       # ADIM 8: Uygulamayı paketle (imzasız - Apple Developer sertifikası yok)
       # ======================================================================
