@@ -85,7 +85,9 @@ jobs:
             libpcsclite-dev \
             libfido2-1 \
             libfido2-dev \
-            fido2-tools
+            fido2-tools \
+            libpipewire-0.3-dev \
+            libva-dev
 
       # ======================================================================
       # ADIM 5c: fido2 header dogrulama (erken hata yakalama)
