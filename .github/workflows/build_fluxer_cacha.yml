@@ -1,5 +1,5 @@
 # ==============================================================================
-# CaCha-Fluxer Desktop Build Workflow (macOS - x64 + arm64)
+# CaCha-Fluxer Desktop Build Workflow (macOS arm64 - Apple Silicon)
 # ==============================================================================
 
 name: Build CaCha-Fluxer (macOS)
@@ -11,20 +11,8 @@ on:
 
 jobs:
   build:
-    name: Build (macos ${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            runner: macos-14
-            rust_target: aarch64-apple-darwin
-            electron_arch: arm64
-          - arch: x64
-            runner: macos-13
-            rust_target: x86_64-apple-darwin
-            electron_arch: x64
+    name: Build (macos arm64)
+    runs-on: macos-14
 
     steps:
       # ======================================================================
@@ -40,7 +28,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.93.0"
-          targets: ${{ matrix.rust_target }}
+          targets: aarch64-apple-darwin
 
       # ======================================================================
       # ADIM 3: Node.js 20 kur
@@ -60,10 +48,13 @@ jobs:
       # ======================================================================
       # ADIM 5: macOS sistem bağımlılıklarını kur (Homebrew)
       # ======================================================================
-      # NOT: Linux'taki gibi eski/donmuş apt paketleri sorunu Homebrew'da
-      # genelde yaşanmıyor çünkü brew formulaları upstream'i sik sik takip
-      # ediyor. Yine de bir formula geride kalirsa ayni "es384.h" tarzi
-      # hata cikabilir - o zaman 'brew install libfido2 --HEAD' denenebilir.
+      # NOT: 'pipewire' formulu kasitli olarak KALDIRILDI - Homebrew'da
+      # sadece Linux icin destekleniyor (formulae.brew.sh: "Requires: Linux").
+      # Onceki denemede listeye eklenmisti ve brew install tum formulleri
+      # tek seferde cozumledigi icin pipewire cozumlenemeyince komut
+      # basarisiz oldu; sonundaki '|| true' bu hatayi sessizce yuttugu icin
+      # libfido2 dahil HICBIR PAKET KURULMADI. Artik '|| true' yok - gercek
+      # hatalar sessizce yutulmuyor.
       - name: Install macOS system dependencies
         shell: bash
         run: |
@@ -74,11 +65,7 @@ jobs:
             libfido2 \
             opus \
             libvpx \
-            ffmpeg \
-            pipewire || true
-          # pipewire macOS'ta anlamli degil (Linux-only), yukaridaki satir
-          # formul yoksa sessizce gecer (|| true). Gercek native modul
-          # gereksinimlerine gore bu listeyi daraltabiliriz.
+            ffmpeg
 
       # ======================================================================
       # ADIM 5b: libfido2 header dogrulama (erken hata yakalama)
@@ -88,5 +75,77 @@ jobs:
         run: |
           FIDO2_PREFIX=$(brew --prefix libfido2)
           echo "libfido2 prefix: $FIDO2_PREFIX"
-          test -f "$FIDO2_PREFIX/include/fido/es384.h" \
-            && echo "es384.h OK" \
+          if [ -f "$FIDO2_PREFIX/include/fido/es384.h" ]; then
+            echo "es384.h OK"
+          else
+            echo "es384.h MISSING - libfido2 dogru kurulmamis olabilir"
+            ls -la "$FIDO2_PREFIX/include/fido/" 2>/dev/null || echo "fido/ dizini de yok"
+            exit 1
+          fi
+          echo "PKG_CONFIG_PATH_EXTRA=$FIDO2_PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      # ======================================================================
+      # ADIM 6: Node.js bağımlılıklarını kur (KÖK DİZİNDE)
+      # ======================================================================
+      - name: Install Node.js dependencies (root)
+        shell: bash
+        run: pnpm install
+
+      # ======================================================================
+      # ADIM 7: Kaynak kodu derle
+      # ======================================================================
+      # NOT: Linux'taki tecrubeden ders alarak CFLAGS/CXXFLAGS/C_INCLUDE_PATH
+      # gibi genel env degiskenlerini KASITLI olarak set ETMIYORUZ - bunlar
+      # cxx-build gibi native crate'lerin derlemesini bozabiliyor
+      # (stdlib.h / TargetConditionals.h bulunamadi tarzi hatalar). Sadece
+      # bindgen'e ozel PKG_CONFIG ayarlarini veriyoruz.
+      - name: Build desktop app
+        working-directory: fluxer_desktop
+        shell: bash
+        env:
+          NODE_ENV: production
+          FLUXER_DESKTOP_PRODUCTION: 'true'
+          PUBLIC_RELEASE_CHANNEL: stable
+          PUBLIC_BUILD_VERSION: ${{ github.ref_name }}
+          ELECTRON_ARCH: arm64
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+          PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig:${{ env.PKG_CONFIG_PATH_EXTRA }}
+          PKG_CONFIG_ALLOW_SYSTEM_CFLAGS: 1
+          PKG_CONFIG_ALLOW_SYSTEM_LIBS: 1
+        run: |
+          unset CFLAGS CXXFLAGS C_INCLUDE_PATH CPLUS_INCLUDE_PATH
+          echo "--- temizlik sonrasi ilgili env degiskenleri ---"
+          env | grep -E "CFLAGS|CXXFLAGS|INCLUDE_PATH" || echo "temiz"
+          env -u CFLAGS -u CXXFLAGS -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH pnpm build
+
+      # ======================================================================
+      # ADIM 8: Uygulamayı paketle (imzasız - Apple Developer sertifikası yok)
+      # ======================================================================
+      # NOT: CSC_IDENTITY_AUTO_DISCOVERY=false, electron-builder'in Keychain'de
+      # olmayan bir imzalama sertifikasi aramasini engeller. Imzasiz .dmg/.zip
+      # calisir ama kullanicilar ilk acilista Gatekeeper uyarisi gorur
+      # (sag tik > Ac ile gecilebilir). Kendi Apple Developer sertifikan
+      # varsa CSC_LINK / CSC_KEY_PASSWORD secret'lari eklenip bu satir
+      # kaldirilmali - notarization icin de ayri bir adim gerekir.
+      - name: Package macOS app
+        working-directory: fluxer_desktop
+        shell: bash
+        env:
+          ELECTRON_ARCH: arm64
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: pnpm exec electron-builder --config electron-builder.config.cjs --mac --arm64 --publish never
+
+      # ======================================================================
+      # ADIM 9: Çıktıları (Artifacts) GitHub'a yükle
+      # ======================================================================
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cacha-fluxer-macos-arm64
+          path: |
+            **/*.dmg
+            **/*.zip
+            **/*.pkg
+          if-no-files-found: warn
+          retention-days: 90
