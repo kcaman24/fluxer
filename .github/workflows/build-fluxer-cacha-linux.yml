@@ -45,13 +45,19 @@ jobs:
         shell: bash
         run: corepack enable && corepack prepare pnpm@latest --activate
 
-      # ======================================================================
+    # ======================================================================
       # ADIM 5: Linux sistem bağımlılıklarını kur
       # ======================================================================
+      - name: Add Yubico PPA (guncel libfido2 icin)
+        shell: bash
+        run: |
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:yubico/stable
+          sudo apt-get update
+
       - name: Install Linux system dependencies
         shell: bash
         run: |
-          sudo apt-get update
           sudo apt-get install -y \
             build-essential \
             cmake \
@@ -73,8 +79,15 @@ jobs:
             libopus-dev \
             libudev-dev \
             libpcsclite-dev \
-            libfido2-dev
+            libfido2-1 \
+            libfido2-dev \
+            fido2-tools
 
+      - name: Verify fido2 headers
+        shell: bash
+        run: |
+          dpkg -l | grep libfido2
+          test -f /usr/include/fido/es384.h && echo "es384.h OK" || (echo "es384.h MISSING" && exit 1)
       # ======================================================================
       # ADIM 6: Node.js bağımlılıklarını kur (KÖK DİZİNDE)
       # ======================================================================
