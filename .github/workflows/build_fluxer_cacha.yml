@@ -46,14 +46,19 @@ jobs:
         run: corepack enable && corepack prepare pnpm@latest --activate
 
       # ======================================================================
-      # ADIM 5a: Yubico PPA ekle (guncel libfido2 / es384.h icin)
+      # ADIM 5a: Guncel kutuphaneler icin PPA'lari ekle
       # ======================================================================
-      - name: Add Yubico PPA (guncel libfido2 icin)
+      # jammy'nin apt deposundaki libfido2 (1.10.0) ve pipewire (0.3.48)
+      # cok eski - libfido2-sys ve libspa Rust crate'leri daha yeni C API
+      # bekliyor (fido/es384.h, spa_meta_region_is_valid, vb.). Upstream
+      # PPA'lardan guncel surumleri kuruyoruz.
+      - name: Add upstream PPAs (libfido2 + pipewire)
         shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y software-properties-common
           sudo add-apt-repository -y ppa:yubico/stable
+          sudo add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
           sudo apt-get update
 
       # ======================================================================
@@ -86,17 +91,26 @@ jobs:
             libfido2-1 \
             libfido2-dev \
             fido2-tools \
+            libpipewire-0.3-0 \
             libpipewire-0.3-dev \
+            libspa-0.2-dev \
             libva-dev
 
       # ======================================================================
-      # ADIM 5c: fido2 header dogrulama (erken hata yakalama)
+      # ADIM 5c: fido2 + pipewire header dogrulama (erken hata yakalama)
       # ======================================================================
-      - name: Verify fido2 headers
+      - name: Verify native library headers
         shell: bash
         run: |
+          echo "--- libfido2 ---"
           dpkg -l | grep libfido2
           test -f /usr/include/fido/es384.h && echo "es384.h OK" || (echo "es384.h MISSING" && exit 1)
+          echo "--- pipewire/spa ---"
+          dpkg -l | grep -E "pipewire|libspa"
+          pkg-config --modversion libpipewire-0.3
+          grep -q "spa_meta_region_is_valid" /usr/include/spa-0.2/spa/buffer/meta.h \
+            && echo "spa_meta_region_is_valid OK" \
+            || (echo "spa_meta_region_is_valid MISSING" && exit 1)
 
       # ======================================================================
       # ADIM 6: Node.js bağımlılıklarını kur (KÖK DİZİNDE)
