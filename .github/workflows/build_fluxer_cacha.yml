@@ -1,8 +1,8 @@
 # ==============================================================================
-# CaCha-Fluxer Desktop Build Workflow (Sadece Linux x64)
+# CaCha-Fluxer Desktop Build Workflow (macOS - x64 + arm64)
 # ==============================================================================
 
-name: Build CaCha-Fluxer (Linux)
+name: Build CaCha-Fluxer (macOS)
 
 on:
   push:
@@ -11,8 +11,20 @@ on:
 
 jobs:
   build:
-    name: Build (linux x64)
-    runs-on: ubuntu-22.04
+    name: Build (macos ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+            rust_target: aarch64-apple-darwin
+            electron_arch: arm64
+          - arch: x64
+            runner: macos-13
+            rust_target: x86_64-apple-darwin
+            electron_arch: x64
 
     steps:
       # ======================================================================
@@ -28,7 +40,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.93.0"
-          targets: x86_64-unknown-linux-gnu
+          targets: ${{ matrix.rust_target }}
 
       # ======================================================================
       # ADIM 3: Node.js 20 kur
@@ -46,132 +58,35 @@ jobs:
         run: corepack enable && corepack prepare pnpm@latest --activate
 
       # ======================================================================
-      # ADIM 5a: Guncel kutuphaneler icin PPA'lari ekle
+      # ADIM 5: macOS sistem bağımlılıklarını kur (Homebrew)
       # ======================================================================
-      # jammy'nin apt deposundaki libfido2 (1.10.0) ve pipewire (0.3.48)
-      # cok eski - libfido2-sys ve libspa Rust crate'leri daha yeni C API
-      # bekliyor (fido/es384.h, spa_meta_region_is_valid, vb.). Upstream
-      # PPA'lardan guncel surumleri kuruyoruz.
-      - name: Add upstream PPAs (libfido2 + pipewire)
+      # NOT: Linux'taki gibi eski/donmuş apt paketleri sorunu Homebrew'da
+      # genelde yaşanmıyor çünkü brew formulaları upstream'i sik sik takip
+      # ediyor. Yine de bir formula geride kalirsa ayni "es384.h" tarzi
+      # hata cikabilir - o zaman 'brew install libfido2 --HEAD' denenebilir.
+      - name: Install macOS system dependencies
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y software-properties-common
-          sudo add-apt-repository -y ppa:yubico/stable
-          sudo add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
-          sudo apt-get update
-
-      # ======================================================================
-      # ADIM 5b: Linux sistem bağımlılıklarını kur
-      # ======================================================================
-      - name: Install Linux system dependencies
-        shell: bash
-        run: |
-          sudo apt-get install -y \
-            build-essential \
+          brew update
+          brew install \
             cmake \
-            llvm \
-            clang \
-            libclang-dev \
             pkg-config \
-            python3 \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libasound2-dev \
-            libdbus-1-dev \
-            libpulse-dev \
-            libevdev-dev \
-            libssl-dev \
-            libvpx-dev \
-            libopus-dev \
-            libudev-dev \
-            libpcsclite-dev \
-            libfido2-1 \
-            libfido2-dev \
-            fido2-tools \
-            libpipewire-0.3-0 \
-            libpipewire-0.3-dev \
-            libspa-0.2-dev \
-            libva-dev
+            libfido2 \
+            opus \
+            libvpx \
+            ffmpeg \
+            pipewire || true
+          # pipewire macOS'ta anlamli degil (Linux-only), yukaridaki satir
+          # formul yoksa sessizce gecer (|| true). Gercek native modul
+          # gereksinimlerine gore bu listeyi daraltabiliriz.
 
       # ======================================================================
-      # ADIM 5c: fido2 + pipewire header dogrulama (erken hata yakalama)
+      # ADIM 5b: libfido2 header dogrulama (erken hata yakalama)
       # ======================================================================
-      - name: Verify native library headers
+      - name: Verify fido2 headers
         shell: bash
         run: |
-          echo "--- libfido2 ---"
-          dpkg -l | grep libfido2
-          test -f /usr/include/fido/es384.h && echo "es384.h OK" || (echo "es384.h MISSING" && exit 1)
-          echo "--- pipewire/spa ---"
-          dpkg -l | grep -E "pipewire|libspa"
-          pkg-config --modversion libpipewire-0.3
-          grep -q "spa_meta_region_is_valid" /usr/include/spa-0.2/spa/buffer/meta.h \
-            && echo "spa_meta_region_is_valid OK" \
-            || (echo "spa_meta_region_is_valid MISSING" && exit 1)
-
-      # ======================================================================
-      # ADIM 6: Node.js bağımlılıklarını kur (KÖK DİZİNDE)
-      # ======================================================================
-      - name: Install Node.js dependencies (root)
-        shell: bash
-        run: pnpm install
-
-      # ======================================================================
-      # ADIM 7: Kaynak kodu derle
-      # ======================================================================
-      # NOT: CFLAGS / CXXFLAGS / C_INCLUDE_PATH / CPLUS_INCLUDE_PATH kasıtlı
-      # olarak set edilmiyor — bunlar cxx-build gibi diger native crate'lerin
-      # derlemesini bozuyordu (stdlib.h bulunamadı hatası). bindgen icin
-      # sadece LIBCLANG_PATH ve BINDGEN_EXTRA_CLANG_ARGS yeterli. unset + env -u
-      # kombinasyonu, bu degiskenlerin nereden gelirse gelsin pnpm build'e
-      # sizmamasini garanti ediyor.
-      - name: Build desktop app
-        working-directory: fluxer_desktop
-        shell: bash
-        env:
-          NODE_ENV: production
-          FLUXER_DESKTOP_PRODUCTION: 'true'
-          PUBLIC_RELEASE_CHANNEL: stable
-          PUBLIC_BUILD_VERSION: ${{ github.ref_name }}
-          ELECTRON_ARCH: x64
-          LIBCLANG_PATH: /usr/lib/llvm-14/lib
-          BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/include -I/usr/include/x86_64-linux-gnu"
-          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig
-          PKG_CONFIG_LIBDIR: /usr/lib/x86_64-linux-gnu/pkgconfig
-          PKG_CONFIG_ALLOW_SYSTEM_CFLAGS: 1
-          PKG_CONFIG_ALLOW_SYSTEM_LIBS: 1
-          LIBRARY_PATH: /usr/lib/x86_64-linux-gnu
-        run: |
-          unset CFLAGS CXXFLAGS C_INCLUDE_PATH CPLUS_INCLUDE_PATH
-          echo "--- temizlik sonrasi ilgili env degiskenleri ---"
-          env | grep -E "CFLAGS|CXXFLAGS|INCLUDE_PATH" || echo "temiz"
-          env -u CFLAGS -u CXXFLAGS -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH pnpm build
-
-      # ======================================================================
-      # ADIM 8: Uygulamayı paketle
-      # ======================================================================
-      - name: Package Linux app
-        working-directory: fluxer_desktop
-        shell: bash
-        env:
-          ELECTRON_ARCH: x64
-        run: pnpm exec electron-builder --config electron-builder.config.cjs --linux --publish never
-
-      # ======================================================================
-      # ADIM 9: Çıktıları (Artifacts) GitHub'a yükle
-      # ======================================================================
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: cacha-fluxer-linux-x64
-          path: |
-            **/*.AppImage
-            **/*.deb
-            **/*.rpm
-            **/*.zip
-          if-no-files-found: warn
-          retention-days: 90
+          FIDO2_PREFIX=$(brew --prefix libfido2)
+          echo "libfido2 prefix: $FIDO2_PREFIX"
+          test -f "$FIDO2_PREFIX/include/fido/es384.h" \
+            && echo "es384.h OK" \
