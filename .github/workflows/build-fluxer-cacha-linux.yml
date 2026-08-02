@@ -85,8 +85,8 @@ jobs:
       # ======================================================================
       # ADIM 7: Kaynak kodu derle
       # ======================================================================
-      # KRİTİK DÜZELTME: libfido2-sys'in fido/es384.h dosyasını bulabilmesi için
-      # clang ve bindgen'e sistem yolları açıkça veriliyor.
+      # KRİTİK ÇÖZÜM: CPATH ve LIBRARY_PATH ile clang'ın ve bindgen'in
+      # /usr/include altındaki fido header'larını kesin olarak bulması sağlanır.
       - name: Build desktop app
         working-directory: fluxer_desktop
         shell: bash
@@ -98,8 +98,11 @@ jobs:
           ELECTRON_ARCH: x64
           LIBCLANG_PATH: /usr/lib/llvm-14/lib
           BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/include -I/usr/include/x86_64-linux-gnu"
-          C_INCLUDE_PATH: /usr/include
-          CPLUS_INCLUDE_PATH: /usr/include
+          # C/C++ derleyicisini ve pkg-config'i sistem yollarını okumaya zorla
+          CPATH: /usr/include
+          LIBRARY_PATH: /usr/lib/x86_64-linux-gnu
+          PKG_CONFIG_ALLOW_SYSTEM_CFLAGS: 1
+          PKG_CONFIG_ALLOW_SYSTEM_LIBS: 1
         run: pnpm build
 
       # ======================================================================
