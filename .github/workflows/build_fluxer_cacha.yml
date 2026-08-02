@@ -128,10 +128,23 @@ jobs:
       # ======================================================================
       # ADIM 7: Node.js bağımlılıklarını kur (KÖK DİZİNDE)
       # ======================================================================
-      - name: Install Node.js dependencies (root)
+      - name: Build desktop app
+        working-directory: fluxer_desktop
         shell: bash
-        run: pnpm install
-
+        env:
+          NODE_ENV: production
+          FLUXER_DESKTOP_PRODUCTION: 'true'
+          PUBLIC_RELEASE_CHANNEL: stable
+          PUBLIC_BUILD_VERSION: ${{ github.ref_name }}
+          ELECTRON_ARCH: x64
+          LIBCLANG_PATH: /usr/lib/llvm-14/lib
+          BINDGEN_EXTRA_CLANG_ARGS: "-I/usr/include -I/usr/include/x86_64-linux-gnu"
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig
+          PKG_CONFIG_LIBDIR: /usr/lib/x86_64-linux-gnu/pkgconfig
+          PKG_CONFIG_ALLOW_SYSTEM_CFLAGS: 1
+          PKG_CONFIG_ALLOW_SYSTEM_LIBS: 1
+          LIBRARY_PATH: /usr/lib/x86_64-linux-gnu
+        run: pnpm build
       # ======================================================================
       # ADIM 8: Kaynak kodu derle
       # ======================================================================
