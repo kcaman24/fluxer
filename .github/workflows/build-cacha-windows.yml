@@ -1,0 +1,140 @@
+# ==============================================================================
+# CaCha-Fluxer Desktop Build Workflow (Windows x64 - Sadece Windows)
+# ==============================================================================
+# AMAC: icudtl.dat "Invalid file descriptor to ICU data received" hatasini
+# izole bir workflow'da teshis edip cozmek. Sorun cozulunce ana workflow'a
+# (build-fluxer-cacha.yml) geri birlestirilecek.
+# ==============================================================================
+
+name: Build CaCha-Fluxer (Windows)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (windows x64)
+    runs-on: windows-latest
+
+    steps:
+      # ======================================================================
+      # ADIM 1: Kaynak kodu indir
+      # ======================================================================
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # ======================================================================
+      # ADIM 2: Rust toolchain kur (1.93.0 sabit)
+      # ======================================================================
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93.0"
+          targets: x86_64-pc-windows-msvc
+
+      # ======================================================================
+      # ADIM 3: Node.js 20 kur
+      # ======================================================================
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ======================================================================
+      # ADIM 4: pnpm kur (corepack üzerinden)
+      # ======================================================================
+      - name: Setup pnpm
+        shell: bash
+        run: corepack enable && corepack prepare pnpm@latest --activate
+
+      # ======================================================================
+      # ADIM 5: Python kur (bazı native addon build script'leri için gerekli)
+      # ======================================================================
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # ======================================================================
+      # ADIM 6: Node.js bağımlılıklarını kur (KÖK DİZİNDE)
+      # ======================================================================
+      - name: Install Node.js dependencies (root)
+        shell: bash
+        run: pnpm install
+
+      # ======================================================================
+      # ADIM 7: Kaynak kodu derle
+      # ======================================================================
+      - name: Build desktop app
+        working-directory: fluxer_desktop
+        shell: bash
+        env:
+          NODE_ENV: production
+          FLUXER_DESKTOP_PRODUCTION: 'true'
+          PUBLIC_RELEASE_CHANNEL: stable
+          PUBLIC_BUILD_VERSION: ${{ github.ref_name }}
+          ELECTRON_ARCH: x64
+        run: pnpm build
+
+      # ======================================================================
+      # ADIM 8: Uygulamayı paketle
+      # ======================================================================
+      - name: Package Windows app
+        working-directory: fluxer_desktop
+        shell: bash
+        env:
+          ELECTRON_ARCH: x64
+        run: pnpm exec electron-builder --config electron-builder.config.cjs --win --publish never
+
+      # ======================================================================
+      # ADIM 8b: icudtl.dat dogrulama (erken hata yakalama)
+      # ======================================================================
+      # "Invalid file descriptor to ICU data received" hatasi icudtl.dat
+      # dosyasinin paketlenmis ciktida eksik/bozuk oldugunu gosteriyor. Bu
+      # adim, electron-builder ciktisindaki (win-unpacked klasoru) TUM
+      # icudtl.dat kopyalarini bulup boyutlarini raporluyor - build'i
+      # basarisiz kilmiyor (henuz), sadece log'a net bir kanit birakiyor.
+      - name: Verify icudtl.dat in packaged output
+        shell: pwsh
+        run: |
+          Write-Host "--- icudtl.dat aranan tum konumlar ---"
+          $found = Get-ChildItem -Path "fluxer_desktop" -Filter "icudtl.dat" -Recurse -ErrorAction SilentlyContinue
+          if ($found) {
+            $found | Format-Table FullName, Length -AutoSize
+          } else {
+            Write-Host "!!! icudtl.dat HICBIR YERDE BULUNAMADI !!!"
+          }
+          Write-Host "--- win-unpacked klasorunun tam listesi (ilk 100 dosya) ---"
+          Get-ChildItem -Path "fluxer_desktop\dist\win-unpacked" -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 100 FullName, Length |
+            Format-Table -AutoSize
+
+      # ======================================================================
+      # ADIM 9: Paketlenmemiş çıktıyı (win-unpacked) da artifact olarak yükle
+      # ======================================================================
+      # Kurulum yapmadan dogrudan calistirilan senaryoyu (kullanicinin
+      # yaptigi gibi) test edebilmek icin sadece installer'i degil,
+      # win-unpacked klasorunun tamamini de indirilebilir yapiyoruz.
+      - name: Upload unpacked build (debug)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cacha-fluxer-win-unpacked-debug
+          path: fluxer_desktop/dist/win-unpacked/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # ======================================================================
+      # ADIM 10: Çıktıları (Artifacts) GitHub'a yükle
+      # ======================================================================
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cacha-fluxer-win-x64
+          path: |
+            fluxer_desktop/dist/*.exe
+          if-no-files-found: warn
+          retention-days: 90
